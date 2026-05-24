@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
+import { supabase } from './supabaseClient'
 import './App.css'
 
 const DEFAULT_CATEGORIES = {
@@ -35,13 +36,6 @@ const PIE_COLORS = [
   '#a855f7', '#d946ef', '#0ea5e9', '#84cc16', '#f59e0b',
 ]
 
-function getStored(key, fallback) {
-  try {
-    const data = localStorage.getItem(key)
-    return data ? JSON.parse(data) : fallback
-  } catch { return fallback }
-}
-
 function formatCurrency(n) {
   return '₹' + Math.abs(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
@@ -51,25 +45,19 @@ function PieChart({ data, colors }) {
   if (!data || data.length === 0) return null
   const total = data.reduce((s, d) => s + d.value, 0)
   if (total === 0) return null
-
-  const size = 200
-  const cx = size / 2, cy = size / 2, r = 80
+  const size = 200, cx = size / 2, cy = size / 2, r = 80
   let cumAngle = -Math.PI / 2
-
   const slices = data.map((d, i) => {
     const angle = (d.value / total) * 2 * Math.PI
-    const startX = cx + r * Math.cos(cumAngle)
-    const startY = cy + r * Math.sin(cumAngle)
+    const startX = cx + r * Math.cos(cumAngle), startY = cy + r * Math.sin(cumAngle)
     cumAngle += angle
-    const endX = cx + r * Math.cos(cumAngle)
-    const endY = cy + r * Math.sin(cumAngle)
+    const endX = cx + r * Math.cos(cumAngle), endY = cy + r * Math.sin(cumAngle)
     const largeArc = angle > Math.PI ? 1 : 0
     const path = data.length === 1
       ? `M ${cx} ${cy - r} A ${r} ${r} 0 1 1 ${cx - 0.01} ${cy - r} Z`
       : `M ${cx} ${cy} L ${startX} ${startY} A ${r} ${r} 0 ${largeArc} 1 ${endX} ${endY} Z`
     return { ...d, path, color: colors[i % colors.length], pct: ((d.value / total) * 100).toFixed(1) }
   })
-
   return (
     <div className="pie-chart-container">
       <svg viewBox={`0 0 ${size} ${size}`} className="pie-svg">
@@ -97,35 +85,23 @@ function PieChart({ data, colors }) {
 
 // ─── Date filter helpers ───
 function getStartOfWeek(d) {
-  const date = new Date(d)
-  const day = date.getDay()
-  const diff = day === 0 ? 6 : day - 1 // Monday start
-  date.setDate(date.getDate() - diff)
-  date.setHours(0, 0, 0, 0)
-  return date
+  const date = new Date(d); const day = date.getDay()
+  date.setDate(date.getDate() - (day === 0 ? 6 : day - 1)); date.setHours(0, 0, 0, 0); return date
 }
-
 function filterByPeriod(transactions, period) {
   const now = new Date()
-  if (period === 'week') {
-    const start = getStartOfWeek(now)
-    return transactions.filter(t => new Date(t.date) >= start)
-  }
-  if (period === 'month') {
-    const start = new Date(now.getFullYear(), now.getMonth(), 1)
-    return transactions.filter(t => new Date(t.date) >= start)
-  }
-  if (period === 'year') {
-    const start = new Date(now.getFullYear(), 0, 1)
-    return transactions.filter(t => new Date(t.date) >= start)
-  }
+  if (period === 'week') { const s = getStartOfWeek(now); return transactions.filter(t => new Date(t.date) >= s) }
+  if (period === 'month') { const s = new Date(now.getFullYear(), now.getMonth(), 1); return transactions.filter(t => new Date(t.date) >= s) }
+  if (period === 'year') { const s = new Date(now.getFullYear(), 0, 1); return transactions.filter(t => new Date(t.date) >= s) }
   return transactions
 }
 
 function App() {
-  const [transactions, setTransactions] = useState(() => getStored('expense-tracker-data', []))
-  const [accounts, setAccounts] = useState(() => getStored('expense-tracker-accounts', []))
-  const [customCategories, setCustomCategories] = useState(() => getStored('expense-tracker-categories', { income: [], expense: [] }))
+  const [transactions, setTransactions] = useState([])
+  const [accounts, setAccounts] = useState([])
+  const [customCategories, setCustomCategories] = useState({ income: [], expense: [] })
+  const [loading, setLoading] = useState(true)
+
   const [type, setType] = useState('expense')
   const [description, setDescription] = useState('')
   const [amount, setAmount] = useState('')
@@ -134,12 +110,9 @@ function App() {
   const [filterType, setFilterType] = useState('all')
   const [filterCategory, setFilterCategory] = useState('all')
   const [rightTab, setRightTab] = useState('transactions')
-
-  // Chart state
   const [chartPeriod, setChartPeriod] = useState('month')
   const [chartType, setChartType] = useState('expense')
 
-  // Account form state
   const [showAccountForm, setShowAccountForm] = useState(false)
   const [accName, setAccName] = useState('')
   const [accBank, setAccBank] = useState('icici')
@@ -148,54 +121,78 @@ function App() {
   const [accCreditLimit, setAccCreditLimit] = useState('')
   const [editingAccountId, setEditingAccountId] = useState(null)
 
-  // Category form state
   const [showCategoryForm, setShowCategoryForm] = useState(false)
   const [catType, setCatType] = useState('expense')
   const [catLabel, setCatLabel] = useState('')
   const [catIcon, setCatIcon] = useState('📦')
 
-  // Merge default + custom categories
   const CATEGORIES = useMemo(() => ({
     income: [...DEFAULT_CATEGORIES.income, ...customCategories.income],
     expense: [...DEFAULT_CATEGORIES.expense, ...customCategories.expense],
   }), [customCategories])
 
-  function getCategoryInfo(type, cat) {
+  const getCategoryInfo = useCallback((type, cat) => {
     const list = CATEGORIES[type] || []
     return list.find(c => c.value === cat) || { label: cat, icon: '📌' }
-  }
+  }, [CATEGORIES])
 
-  useEffect(() => { localStorage.setItem('expense-tracker-data', JSON.stringify(transactions)) }, [transactions])
-  useEffect(() => { localStorage.setItem('expense-tracker-accounts', JSON.stringify(accounts)) }, [accounts])
-  useEffect(() => { localStorage.setItem('expense-tracker-categories', JSON.stringify(customCategories)) }, [customCategories])
+  // ─── Fetch all data from Supabase on mount ───
+  useEffect(() => {
+    async function fetchAll() {
+      setLoading(true)
+      const [txRes, accRes, catRes] = await Promise.all([
+        supabase.from('transactions').select('*').order('date', { ascending: false }).order('created_at', { ascending: false }),
+        supabase.from('accounts').select('*').order('created_at', { ascending: true }),
+        supabase.from('categories').select('*').order('created_at', { ascending: true }),
+      ])
+      if (txRes.data) setTransactions(txRes.data.map(t => ({ ...t, amount: Number(t.amount) })))
+      if (accRes.data) setAccounts(accRes.data.map(a => ({ ...a, balance: Number(a.balance), credit_limit: Number(a.credit_limit) })))
+      if (catRes.data) {
+        const custom = { income: [], expense: [] }
+        catRes.data.forEach(c => {
+          if (custom[c.type]) custom[c.type].push({ value: c.value, label: c.label, icon: c.icon, custom: true, dbId: c.id })
+        })
+        setCustomCategories(custom)
+      }
+      setLoading(false)
+    }
+    fetchAll()
+  }, [])
+
   useEffect(() => { setCategory(CATEGORIES[type]?.[0]?.value || '') }, [type, CATEGORIES])
 
   // ─── Transaction handlers ───
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault()
     if (!description.trim() || !amount || parseFloat(amount) <= 0) return
-    setTransactions(prev => [{ id: Date.now(), type, description: description.trim(), amount: parseFloat(amount), category, date }, ...prev])
-    setDescription('')
-    setAmount('')
-    setDate(new Date().toISOString().split('T')[0])
+    const row = { type, description: description.trim(), amount: parseFloat(amount), category, date }
+    const { data, error } = await supabase.from('transactions').insert(row).select().single()
+    if (error) { alert('Error saving: ' + error.message); return }
+    setTransactions(prev => [{ ...data, amount: Number(data.amount) }, ...prev])
+    setDescription(''); setAmount(''); setDate(new Date().toISOString().split('T')[0])
   }
 
-  function handleDelete(id) { setTransactions(prev => prev.filter(t => t.id !== id)) }
+  async function handleDelete(id) {
+    const { error } = await supabase.from('transactions').delete().eq('id', id)
+    if (!error) setTransactions(prev => prev.filter(t => t.id !== id))
+  }
 
   // ─── Account handlers ───
-  function handleAccountSubmit(e) {
+  async function handleAccountSubmit(e) {
     e.preventDefault()
     if (!accName.trim()) return
-    const bal = parseFloat(accBalance) || 0
-    const obj = {
-      name: accName.trim(), bank: accBank, type: accType, balance: bal,
-      creditLimit: accType === 'credit' ? (parseFloat(accCreditLimit) || 0) : 0,
+    const row = {
+      name: accName.trim(), bank: accBank, type: accType,
+      balance: parseFloat(accBalance) || 0,
+      credit_limit: accType === 'credit' ? (parseFloat(accCreditLimit) || 0) : 0,
     }
     if (editingAccountId) {
-      setAccounts(prev => prev.map(a => a.id === editingAccountId ? { ...a, ...obj } : a))
+      const { data, error } = await supabase.from('accounts').update(row).eq('id', editingAccountId).select().single()
+      if (!error) setAccounts(prev => prev.map(a => a.id === editingAccountId ? { ...data, balance: Number(data.balance), credit_limit: Number(data.credit_limit) } : a))
       setEditingAccountId(null)
     } else {
-      setAccounts(prev => [...prev, { id: Date.now(), ...obj }])
+      const { data, error } = await supabase.from('accounts').insert(row).select().single()
+      if (!error) setAccounts(prev => [...prev, { ...data, balance: Number(data.balance), credit_limit: Number(data.credit_limit) }])
     }
     resetAccountForm()
   }
@@ -203,10 +200,13 @@ function App() {
   function startEditAccount(acc) {
     setEditingAccountId(acc.id); setAccName(acc.name); setAccBank(acc.bank)
     setAccType(acc.type); setAccBalance(acc.balance.toString())
-    setAccCreditLimit(acc.creditLimit ? acc.creditLimit.toString() : ''); setShowAccountForm(true)
+    setAccCreditLimit(acc.credit_limit ? acc.credit_limit.toString() : ''); setShowAccountForm(true)
   }
 
-  function deleteAccount(id) { setAccounts(prev => prev.filter(a => a.id !== id)) }
+  async function deleteAccount(id) {
+    const { error } = await supabase.from('accounts').delete().eq('id', id)
+    if (!error) setAccounts(prev => prev.filter(a => a.id !== id))
+  }
 
   function resetAccountForm() {
     setShowAccountForm(false); setEditingAccountId(null)
@@ -214,24 +214,29 @@ function App() {
   }
 
   // ─── Category handlers ───
-  function handleAddCategory(e) {
+  async function handleAddCategory(e) {
     e.preventDefault()
     if (!catLabel.trim()) return
     const value = catLabel.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')
-    // Check for duplicates
     if (CATEGORIES[catType].some(c => c.value === value)) return
-    setCustomCategories(prev => ({
-      ...prev,
-      [catType]: [...prev[catType], { value, label: catLabel.trim(), icon: catIcon, custom: true }]
-    }))
+    const row = { type: catType, value, label: catLabel.trim(), icon: catIcon }
+    const { data, error } = await supabase.from('categories').insert(row).select().single()
+    if (!error) {
+      setCustomCategories(prev => ({
+        ...prev,
+        [catType]: [...prev[catType], { value: data.value, label: data.label, icon: data.icon, custom: true, dbId: data.id }]
+      }))
+    }
     setCatLabel(''); setCatIcon('📦'); setShowCategoryForm(false)
   }
 
-  function handleDeleteCategory(catType, catValue) {
-    setCustomCategories(prev => ({
-      ...prev,
-      [catType]: prev[catType].filter(c => c.value !== catValue)
-    }))
+  async function handleDeleteCategory(cType, cValue) {
+    const cat = customCategories[cType].find(c => c.value === cValue)
+    if (cat?.dbId) {
+      const { error } = await supabase.from('categories').delete().eq('id', cat.dbId)
+      if (error) return
+    }
+    setCustomCategories(prev => ({ ...prev, [cType]: prev[cType].filter(c => c.value !== cValue) }))
   }
 
   // ─── Computed values ───
@@ -243,7 +248,7 @@ function App() {
   const creditCards = accounts.filter(a => a.type === 'credit')
   const totalBankBalance = bankAccounts.reduce((s, a) => s + a.balance, 0)
   const totalCreditUsed = creditCards.reduce((s, a) => s + a.balance, 0)
-  const totalCreditLimit = creditCards.reduce((s, a) => s + a.creditLimit, 0)
+  const totalCreditLimit = creditCards.reduce((s, a) => s + a.credit_limit, 0)
   const totalAvailableCredit = totalCreditLimit - totalCreditUsed
   const totalCash = totalBankBalance
 
@@ -260,22 +265,20 @@ function App() {
   })
   const maxCatAmount = Math.max(...Object.values(categoryTotals), 1)
 
-  // ─── Pie chart data ───
   const chartData = useMemo(() => {
     const periodTx = filterByPeriod(transactions, chartPeriod).filter(t => t.type === chartType)
     const totals = {}
     periodTx.forEach(t => { totals[t.category] = (totals[t.category] || 0) + t.amount })
-    return Object.entries(totals)
-      .sort((a, b) => b[1] - a[1])
-      .map(([cat, val]) => {
-        const info = getCategoryInfo(chartType, cat)
-        return { label: info.label, icon: info.icon, value: val }
-      })
-  }, [transactions, chartPeriod, chartType, CATEGORIES])
+    return Object.entries(totals).sort((a, b) => b[1] - a[1]).map(([cat, val]) => {
+      const info = getCategoryInfo(chartType, cat)
+      return { label: info.label, icon: info.icon, value: val }
+    })
+  }, [transactions, chartPeriod, chartType, getCategoryInfo])
 
   const periodLabel = chartPeriod === 'week' ? 'This Week' : chartPeriod === 'month' ? 'This Month' : chartPeriod === 'year' ? 'This Year' : 'All Time'
-
   const allCategories = [...CATEGORIES.income, ...CATEGORIES.expense]
+
+  if (loading) return <div className="loading">Loading your data...</div>
 
   return (
     <>
@@ -301,22 +304,15 @@ function App() {
               <div className="form-group">
                 <label>Bank</label>
                 <select value={accBank} onChange={e => setAccBank(e.target.value)}>
-                  <option value="icici">ICICI</option>
-                  <option value="sbi">SBI</option>
-                  <option value="hdfc">HDFC</option>
-                  <option value="axis">Axis</option>
-                  <option value="kotak">Kotak</option>
-                  <option value="pnb">PNB</option>
-                  <option value="bob">BOB</option>
-                  <option value="other">Other</option>
+                  <option value="icici">ICICI</option><option value="sbi">SBI</option><option value="hdfc">HDFC</option>
+                  <option value="axis">Axis</option><option value="kotak">Kotak</option><option value="pnb">PNB</option>
+                  <option value="bob">BOB</option><option value="other">Other</option>
                 </select>
               </div>
               <div className="form-group">
                 <label>Type</label>
                 <select value={accType} onChange={e => setAccType(e.target.value)}>
-                  <option value="savings">Savings Account</option>
-                  <option value="current">Current Account</option>
-                  <option value="credit">Credit Card</option>
+                  <option value="savings">Savings Account</option><option value="current">Current Account</option><option value="credit">Credit Card</option>
                 </select>
               </div>
               <div className="form-group">
@@ -346,22 +342,12 @@ function App() {
               </div>
               {creditCards.length > 0 && (
                 <div className="total-cash-credit">
-                  <div className="credit-stat">
-                    <span className="credit-stat-label">Credit Used</span>
-                    <span className="credit-stat-value used">{formatCurrency(totalCreditUsed)}</span>
-                  </div>
-                  <div className="credit-stat">
-                    <span className="credit-stat-label">Available Credit</span>
-                    <span className="credit-stat-value available">{formatCurrency(totalAvailableCredit)}</span>
-                  </div>
-                  <div className="credit-stat">
-                    <span className="credit-stat-label">Total Limit</span>
-                    <span className="credit-stat-value">{formatCurrency(totalCreditLimit)}</span>
-                  </div>
+                  <div className="credit-stat"><span className="credit-stat-label">Credit Used</span><span className="credit-stat-value used">{formatCurrency(totalCreditUsed)}</span></div>
+                  <div className="credit-stat"><span className="credit-stat-label">Available Credit</span><span className="credit-stat-value available">{formatCurrency(totalAvailableCredit)}</span></div>
+                  <div className="credit-stat"><span className="credit-stat-label">Total Limit</span><span className="credit-stat-value">{formatCurrency(totalCreditLimit)}</span></div>
                 </div>
               )}
             </div>
-
             <div className="accounts-grid">
               {bankAccounts.length > 0 && (
                 <div className="accounts-group">
@@ -386,14 +372,14 @@ function App() {
                 <div className="accounts-group">
                   <h3>Credit Cards</h3>
                   {creditCards.map(a => {
-                    const available = a.creditLimit - a.balance
-                    const usedPct = a.creditLimit > 0 ? (a.balance / a.creditLimit) * 100 : 0
+                    const available = a.credit_limit - a.balance
+                    const usedPct = a.credit_limit > 0 ? (a.balance / a.credit_limit) * 100 : 0
                     return (
                       <div className="account-card credit" key={a.id}>
                         <div className="account-card-icon credit-icon">💳</div>
                         <div className="account-card-info">
                           <div className="account-card-name">{a.name}</div>
-                          <div className="account-card-meta">{a.bank.toUpperCase()} &middot; Limit: {formatCurrency(a.creditLimit)}</div>
+                          <div className="account-card-meta">{a.bank.toUpperCase()} &middot; Limit: {formatCurrency(a.credit_limit)}</div>
                           <div className="credit-bar-track">
                             <div className="credit-bar-fill" style={{ width: `${Math.min(usedPct, 100)}%`, background: usedPct > 80 ? '#ef4444' : usedPct > 50 ? '#f97316' : '#22c55e' }} />
                           </div>
@@ -414,7 +400,6 @@ function App() {
             </div>
           </>
         )}
-
         {accounts.length === 0 && !showAccountForm && (
           <div className="empty-state">No accounts added yet. Add your bank accounts and credit cards to track balances.</div>
         )}
@@ -433,39 +418,24 @@ function App() {
               ))}
             </div>
             <select className="chart-type-select" value={chartType} onChange={e => setChartType(e.target.value)}>
-              <option value="expense">Expenses</option>
-              <option value="income">Income</option>
+              <option value="expense">Expenses</option><option value="income">Income</option>
             </select>
           </div>
         </div>
         <p className="chart-period-label">{periodLabel} &middot; {chartType === 'expense' ? 'Expenses' : 'Income'}</p>
-        {chartData.length > 0 ? (
-          <PieChart data={chartData} colors={PIE_COLORS} />
-        ) : (
-          <div className="empty-state">No {chartType} data for {periodLabel.toLowerCase()}.</div>
-        )}
+        {chartData.length > 0 ? <PieChart data={chartData} colors={PIE_COLORS} /> : <div className="empty-state">No {chartType} data for {periodLabel.toLowerCase()}.</div>}
       </div>
 
       {/* ─── Summary Cards ─── */}
       <div className="summary-cards">
-        <div className="summary-card balance">
-          <label>Txn Balance</label>
-          <div className="amount">{txBalance >= 0 ? '' : '-'}{formatCurrency(txBalance)}</div>
-        </div>
-        <div className="summary-card income">
-          <label>Income</label>
-          <div className="amount">+{formatCurrency(totalIncome)}</div>
-        </div>
-        <div className="summary-card expense">
-          <label>Expenses</label>
-          <div className="amount">-{formatCurrency(totalExpense)}</div>
-        </div>
+        <div className="summary-card balance"><label>Txn Balance</label><div className="amount">{txBalance >= 0 ? '' : '-'}{formatCurrency(txBalance)}</div></div>
+        <div className="summary-card income"><label>Income</label><div className="amount">+{formatCurrency(totalIncome)}</div></div>
+        <div className="summary-card expense"><label>Expenses</label><div className="amount">-{formatCurrency(totalExpense)}</div></div>
       </div>
 
       {/* ─── Main Grid ─── */}
       <div className="main-grid">
         <div>
-          {/* Add Transaction */}
           <div className="card">
             <h2>Add Transaction</h2>
             <form onSubmit={handleSubmit}>
@@ -473,57 +443,29 @@ function App() {
                 <button type="button" className={type === 'income' ? 'active-income' : ''} onClick={() => setType('income')}>Income</button>
                 <button type="button" className={type === 'expense' ? 'active-expense' : ''} onClick={() => setType('expense')}>Expense</button>
               </div>
-              <div className="form-group">
-                <label>Description</label>
-                <input type="text" placeholder="e.g. Grocery shopping" value={description} onChange={e => setDescription(e.target.value)} required />
-              </div>
-              <div className="form-group">
-                <label>Amount (₹)</label>
-                <input type="number" placeholder="0.00" min="0.01" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} required />
-              </div>
-              <div className="form-group">
-                <label>Category</label>
+              <div className="form-group"><label>Description</label><input type="text" placeholder="e.g. Grocery shopping" value={description} onChange={e => setDescription(e.target.value)} required /></div>
+              <div className="form-group"><label>Amount (₹)</label><input type="number" placeholder="0.00" min="0.01" step="0.01" value={amount} onChange={e => setAmount(e.target.value)} required /></div>
+              <div className="form-group"><label>Category</label>
                 <select value={category} onChange={e => setCategory(e.target.value)}>
-                  {CATEGORIES[type].map(c => (
-                    <option key={c.value} value={c.value}>{c.icon} {c.label}</option>
-                  ))}
+                  {CATEGORIES[type].map(c => <option key={c.value} value={c.value}>{c.icon} {c.label}</option>)}
                 </select>
               </div>
-              <div className="form-group">
-                <label>Date</label>
-                <input type="date" value={date} onChange={e => setDate(e.target.value)} required />
-              </div>
+              <div className="form-group"><label>Date</label><input type="date" value={date} onChange={e => setDate(e.target.value)} required /></div>
               <button type="submit" className="btn-submit">Add {type === 'income' ? 'Income' : 'Expense'}</button>
             </form>
           </div>
 
-          {/* Manage Categories */}
           <div className="card" style={{ marginTop: 20 }}>
             <div className="accounts-header">
               <h2>Categories</h2>
               <button className="btn-add-account" onClick={() => setShowCategoryForm(!showCategoryForm)}>+ Add Category</button>
             </div>
-
             {showCategoryForm && (
               <form className="account-form" onSubmit={handleAddCategory}>
-                <div className="form-group">
-                  <label>Type</label>
-                  <select value={catType} onChange={e => setCatType(e.target.value)}>
-                    <option value="expense">Expense</option>
-                    <option value="income">Income</option>
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label>Name</label>
-                  <input type="text" placeholder="e.g. Subscriptions" value={catLabel} onChange={e => setCatLabel(e.target.value)} required />
-                </div>
-                <div className="form-group">
-                  <label>Icon</label>
-                  <div className="emoji-grid">
-                    {EMOJI_OPTIONS.map(e => (
-                      <button type="button" key={e} className={`emoji-btn ${catIcon === e ? 'selected' : ''}`} onClick={() => setCatIcon(e)}>{e}</button>
-                    ))}
-                  </div>
+                <div className="form-group"><label>Type</label><select value={catType} onChange={e => setCatType(e.target.value)}><option value="expense">Expense</option><option value="income">Income</option></select></div>
+                <div className="form-group"><label>Name</label><input type="text" placeholder="e.g. Subscriptions" value={catLabel} onChange={e => setCatLabel(e.target.value)} required /></div>
+                <div className="form-group"><label>Icon</label>
+                  <div className="emoji-grid">{EMOJI_OPTIONS.map(e => <button type="button" key={e} className={`emoji-btn ${catIcon === e ? 'selected' : ''}`} onClick={() => setCatIcon(e)}>{e}</button>)}</div>
                 </div>
                 <div className="account-form-actions">
                   <button type="submit" className="btn-submit btn-sm">Add Category</button>
@@ -531,50 +473,33 @@ function App() {
                 </div>
               </form>
             )}
-
             <div className="category-manage-list">
               <h4>Expense</h4>
               <div className="cat-chips">
-                {CATEGORIES.expense.map(c => (
-                  <span className="cat-chip" key={c.value}>
-                    {c.icon} {c.label}
-                    {c.custom && <button className="cat-chip-delete" onClick={() => handleDeleteCategory('expense', c.value)}>✕</button>}
-                  </span>
-                ))}
+                {CATEGORIES.expense.map(c => <span className="cat-chip" key={c.value}>{c.icon} {c.label}{c.custom && <button className="cat-chip-delete" onClick={() => handleDeleteCategory('expense', c.value)}>✕</button>}</span>)}
               </div>
               <h4 style={{ marginTop: 12 }}>Income</h4>
               <div className="cat-chips">
-                {CATEGORIES.income.map(c => (
-                  <span className="cat-chip" key={c.value}>
-                    {c.icon} {c.label}
-                    {c.custom && <button className="cat-chip-delete" onClick={() => handleDeleteCategory('income', c.value)}>✕</button>}
-                  </span>
-                ))}
+                {CATEGORIES.income.map(c => <span className="cat-chip" key={c.value}>{c.icon} {c.label}{c.custom && <button className="cat-chip-delete" onClick={() => handleDeleteCategory('income', c.value)}>✕</button>}</span>)}
               </div>
             </div>
           </div>
         </div>
 
-        {/* Right Panel */}
         <div className="card">
           <div className="tabs">
             <button className={rightTab === 'transactions' ? 'active' : ''} onClick={() => setRightTab('transactions')}>Transactions</button>
             <button className={rightTab === 'categories' ? 'active' : ''} onClick={() => setRightTab('categories')}>By Category</button>
           </div>
-
           {rightTab === 'transactions' && (
             <>
               <div className="filter-bar">
                 <select value={filterType} onChange={e => { setFilterType(e.target.value); setFilterCategory('all'); }}>
-                  <option value="all">All Types</option>
-                  <option value="income">Income</option>
-                  <option value="expense">Expense</option>
+                  <option value="all">All Types</option><option value="income">Income</option><option value="expense">Expense</option>
                 </select>
                 <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)}>
                   <option value="all">All Categories</option>
-                  {(filterType === 'all' ? allCategories : CATEGORIES[filterType]).map(c => (
-                    <option key={c.value} value={c.value}>{c.label}</option>
-                  ))}
+                  {(filterType === 'all' ? allCategories : CATEGORIES[filterType]).map(c => <option key={c.value} value={c.value}>{c.label}</option>)}
                 </select>
               </div>
               <div className="transaction-list">
@@ -588,9 +513,7 @@ function App() {
                         <div className="desc">{t.description}</div>
                         <div className="meta">{info.label} &middot; {new Date(t.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</div>
                       </div>
-                      <div className={`transaction-amount ${t.type}`}>
-                        {t.type === 'income' ? '+' : '-'}{formatCurrency(t.amount)}
-                      </div>
+                      <div className={`transaction-amount ${t.type}`}>{t.type === 'income' ? '+' : '-'}{formatCurrency(t.amount)}</div>
                       <button className="btn-delete" onClick={() => handleDelete(t.id)} title="Delete">✕</button>
                     </div>
                   )
@@ -598,33 +521,27 @@ function App() {
               </div>
             </>
           )}
-
           {rightTab === 'categories' && (
             <div className="category-breakdown">
               <div className="filter-bar">
                 <select value={filterType === 'all' ? 'expense' : filterType} onChange={e => setFilterType(e.target.value)}>
-                  <option value="expense">Expense Categories</option>
-                  <option value="income">Income Categories</option>
+                  <option value="expense">Expense Categories</option><option value="income">Income Categories</option>
                 </select>
               </div>
               {Object.keys(categoryTotals).length === 0 && <div className="empty-state">No {breakdownType} data yet.</div>}
-              {Object.entries(categoryTotals)
-                .sort((a, b) => b[1] - a[1])
-                .map(([cat, total], i) => {
-                  const info = getCategoryInfo(breakdownType, cat)
-                  return (
-                    <div className="category-item" key={cat}>
-                      <div className="cat-icon">{info.icon}</div>
-                      <div className="cat-info">
-                        <div className="cat-name">{info.label}</div>
-                        <div className="cat-bar-track">
-                          <div className="cat-bar-fill" style={{ width: `${(total / maxCatAmount) * 100}%`, background: PIE_COLORS[i % PIE_COLORS.length] }} />
-                        </div>
-                      </div>
-                      <div className="cat-amount">{formatCurrency(total)}</div>
+              {Object.entries(categoryTotals).sort((a, b) => b[1] - a[1]).map(([cat, total], i) => {
+                const info = getCategoryInfo(breakdownType, cat)
+                return (
+                  <div className="category-item" key={cat}>
+                    <div className="cat-icon">{info.icon}</div>
+                    <div className="cat-info">
+                      <div className="cat-name">{info.label}</div>
+                      <div className="cat-bar-track"><div className="cat-bar-fill" style={{ width: `${(total / maxCatAmount) * 100}%`, background: PIE_COLORS[i % PIE_COLORS.length] }} /></div>
                     </div>
-                  )
-                })}
+                    <div className="cat-amount">{formatCurrency(total)}</div>
+                  </div>
+                )
+              })}
             </div>
           )}
         </div>
