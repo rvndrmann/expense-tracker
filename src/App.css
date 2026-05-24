@@ -847,3 +847,73 @@ header p {
   font-weight: 600;
   vertical-align: middle;
 }
+
+/* ─── Pay Bill ─── */
+.btn-pay-bill {
+  padding: 4px 10px;
+  background: #10b981;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-pay-bill:hover { background: #059669; }
+
+.pay-bill-form {
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 10px;
+  padding: 16px;
+  margin-top: 8px;
+  margin-bottom: 8px;
+}
+.pay-bill-header {
+  font-weight: 600;
+  font-size: 0.95rem;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.pay-bill-due {
+  font-size: 0.8rem;
+  color: #ef4444;
+  font-weight: 600;
+  background: #fef2f2;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+.pay-bill-fields {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+}
+.pay-bill-fields .form-group {
+  flex: 1;
+  min-width: 140px;
+}
+.pay-bill-quick {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+  padding-bottom: 4px;
+}
+.btn-quick {
+  padding: 5px 10px;
+  background: #e2e8f0;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  color: var(--text);
+}
+.btn-quick:hover { background: #cbd5e1; }
+.btn-pay {
+  background: #10b981 !important;
+}
+.btn-pay:hover { background: #059669 !important; }

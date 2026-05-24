@@ -123,6 +123,10 @@ function App() {
 
   const [paymentAccountId, setPaymentAccountId] = useState('')
 
+  const [showPayBillForm, setShowPayBillForm] = useState(null) // credit card id
+  const [payBillAmount, setPayBillAmount] = useState('')
+  const [payBillFromAccount, setPayBillFromAccount] = useState('')
+
   const [showCategoryForm, setShowCategoryForm] = useState(false)
   const [catType, setCatType] = useState('expense')
   const [catLabel, setCatLabel] = useState('')
@@ -266,6 +270,45 @@ function App() {
     setCustomCategories(prev => ({ ...prev, [cType]: prev[cType].filter(c => c.value !== cValue) }))
   }
 
+  // ─── Pay Credit Card Bill handler ───
+  async function handlePayBill(e) {
+    e.preventDefault()
+    const payAmount = parseFloat(payBillAmount)
+    if (!payAmount || payAmount <= 0 || !payBillFromAccount) return
+    const card = accounts.find(a => a.id === showPayBillForm)
+    const fromAcc = accounts.find(a => a.id === parseInt(payBillFromAccount))
+    if (!card || !fromAcc) return
+    if (payAmount > fromAcc.balance) { alert('Insufficient balance in ' + fromAcc.name); return }
+    if (payAmount > card.balance) { alert('Payment amount exceeds outstanding due of ' + formatCurrency(card.balance)); return }
+
+    // Update credit card: reduce outstanding
+    const newCardBalance = card.balance - payAmount
+    const { error: cardErr } = await supabase.from('accounts').update({ balance: newCardBalance }).eq('id', card.id)
+    if (cardErr) { alert('Error updating card: ' + cardErr.message); return }
+
+    // Update savings account: deduct payment
+    const newAccBalance = fromAcc.balance - payAmount
+    const { error: accErr } = await supabase.from('accounts').update({ balance: newAccBalance }).eq('id', fromAcc.id)
+    if (accErr) { alert('Error updating account: ' + accErr.message); return }
+
+    // Record as a transaction for history
+    const row = {
+      type: 'expense', description: `CC Bill Payment - ${card.name}`, amount: payAmount,
+      category: 'bills', date: new Date().toISOString().split('T')[0],
+      payment_account_id: null,
+    }
+    const { data: txData } = await supabase.from('transactions').insert(row).select().single()
+
+    setAccounts(prev => prev.map(a => {
+      if (a.id === card.id) return { ...a, balance: newCardBalance }
+      if (a.id === fromAcc.id) return { ...a, balance: newAccBalance }
+      return a
+    }))
+    if (txData) setTransactions(prev => [{ ...txData, amount: Number(txData.amount) }, ...prev])
+
+    setShowPayBillForm(null); setPayBillAmount(''); setPayBillFromAccount('')
+  }
+
   // ─── Computed values ───
   const totalIncome = transactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0)
   const totalExpense = transactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
@@ -402,23 +445,56 @@ function App() {
                     const available = a.credit_limit - a.balance
                     const usedPct = a.credit_limit > 0 ? (a.balance / a.credit_limit) * 100 : 0
                     return (
-                      <div className="account-card credit" key={a.id}>
-                        <div className="account-card-icon credit-icon">💳</div>
-                        <div className="account-card-info">
-                          <div className="account-card-name">{a.name}</div>
-                          <div className="account-card-meta">{a.bank.toUpperCase()} &middot; Limit: {formatCurrency(a.credit_limit)}</div>
-                          <div className="credit-bar-track">
-                            <div className="credit-bar-fill" style={{ width: `${Math.min(usedPct, 100)}%`, background: usedPct > 80 ? '#ef4444' : usedPct > 50 ? '#f97316' : '#22c55e' }} />
+                      <div key={a.id}>
+                        <div className="account-card credit">
+                          <div className="account-card-icon credit-icon">💳</div>
+                          <div className="account-card-info">
+                            <div className="account-card-name">{a.name}</div>
+                            <div className="account-card-meta">{a.bank.toUpperCase()} &middot; Limit: {formatCurrency(a.credit_limit)}</div>
+                            <div className="credit-bar-track">
+                              <div className="credit-bar-fill" style={{ width: `${Math.min(usedPct, 100)}%`, background: usedPct > 80 ? '#ef4444' : usedPct > 50 ? '#f97316' : '#22c55e' }} />
+                            </div>
+                          </div>
+                          <div className="account-card-credit-info">
+                            <div className="credit-used">Due: {formatCurrency(a.balance)}</div>
+                            <div className="credit-available">Avail: {formatCurrency(available)}</div>
+                          </div>
+                          <div className="account-card-actions">
+                            {a.balance > 0 && bankAccounts.length > 0 && (
+                              <button className="btn-pay-bill" onClick={() => { setShowPayBillForm(showPayBillForm === a.id ? null : a.id); setPayBillAmount(''); setPayBillFromAccount(bankAccounts[0]?.id?.toString() || ''); }} title="Pay Bill">₹ Pay</button>
+                            )}
+                            <button className="btn-icon" onClick={() => startEditAccount(a)} title="Edit">✎</button>
+                            <button className="btn-icon delete" onClick={() => deleteAccount(a.id)} title="Delete">✕</button>
                           </div>
                         </div>
-                        <div className="account-card-credit-info">
-                          <div className="credit-used">Used: {formatCurrency(a.balance)}</div>
-                          <div className="credit-available">Avail: {formatCurrency(available)}</div>
-                        </div>
-                        <div className="account-card-actions">
-                          <button className="btn-icon" onClick={() => startEditAccount(a)} title="Edit">✎</button>
-                          <button className="btn-icon delete" onClick={() => deleteAccount(a.id)} title="Delete">✕</button>
-                        </div>
+                        {showPayBillForm === a.id && (
+                          <form className="pay-bill-form" onSubmit={handlePayBill}>
+                            <div className="pay-bill-header">Pay Bill for {a.name} <span className="pay-bill-due">Due: {formatCurrency(a.balance)}</span></div>
+                            <div className="pay-bill-fields">
+                              <div className="form-group">
+                                <label>From Account</label>
+                                <select value={payBillFromAccount} onChange={e => setPayBillFromAccount(e.target.value)}>
+                                  {bankAccounts.map(ba => (
+                                    <option key={ba.id} value={ba.id}>🏦 {ba.name} ({formatCurrency(ba.balance)})</option>
+                                  ))}
+                                </select>
+                              </div>
+                              <div className="form-group">
+                                <label>Amount (₹)</label>
+                                <input type="number" placeholder="0.00" min="0.01" step="0.01" value={payBillAmount} onChange={e => setPayBillAmount(e.target.value)} required />
+                              </div>
+                              <div className="pay-bill-quick">
+                                <button type="button" className="btn-quick" onClick={() => setPayBillAmount(a.balance.toString())}>Full Due</button>
+                                <button type="button" className="btn-quick" onClick={() => setPayBillAmount(Math.min(a.balance, 5000).toString())}>₹5,000</button>
+                                <button type="button" className="btn-quick" onClick={() => setPayBillAmount(Math.min(a.balance, 10000).toString())}>₹10,000</button>
+                              </div>
+                            </div>
+                            <div className="account-form-actions">
+                              <button type="submit" className="btn-submit btn-sm btn-pay">Pay {payBillAmount ? formatCurrency(parseFloat(payBillAmount) || 0) : ''}</button>
+                              <button type="button" className="btn-cancel" onClick={() => setShowPayBillForm(null)}>Cancel</button>
+                            </div>
+                          </form>
+                        )}
                       </div>
                     )
                   })}
