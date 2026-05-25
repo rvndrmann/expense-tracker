@@ -96,7 +96,63 @@ function filterByPeriod(transactions, period) {
   return transactions
 }
 
+// ─── Auth Login Component ───
+function AuthForm({ onAuth }) {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [isSignUp, setIsSignUp] = useState(false)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [loading, setLoading] = useState(false)
+
+  async function handleAuth(e) {
+    e.preventDefault()
+    setError(''); setMessage(''); setLoading(true)
+    if (isSignUp) {
+      const { error } = await supabase.auth.signUp({ email, password })
+      if (error) setError(error.message)
+      else setMessage('Check your email for the confirmation link!')
+    } else {
+      const { error } = await supabase.auth.signInWithPassword({ email, password })
+      if (error) setError(error.message)
+    }
+    setLoading(false)
+  }
+
+  return (
+    <div className="auth-container">
+      <div className="auth-card">
+        <h1>💰 Expense Tracker</h1>
+        <p className="auth-subtitle">{isSignUp ? 'Create your account' : 'Sign in to your account'}</p>
+        <form onSubmit={handleAuth}>
+          <div className="form-group">
+            <label>Email</label>
+            <input type="email" placeholder="you@example.com" value={email} onChange={e => setEmail(e.target.value)} required />
+          </div>
+          <div className="form-group">
+            <label>Password</label>
+            <input type="password" placeholder="••••••••" minLength="6" value={password} onChange={e => setPassword(e.target.value)} required />
+          </div>
+          {error && <div className="auth-error">{error}</div>}
+          {message && <div className="auth-message">{message}</div>}
+          <button type="submit" className="btn-submit" disabled={loading}>
+            {loading ? 'Please wait...' : isSignUp ? 'Sign Up' : 'Sign In'}
+          </button>
+        </form>
+        <p className="auth-toggle">
+          {isSignUp ? 'Already have an account?' : "Don't have an account?"}
+          <button type="button" className="btn-link" onClick={() => { setIsSignUp(!isSignUp); setError(''); setMessage('') }}>
+            {isSignUp ? 'Sign In' : 'Sign Up'}
+          </button>
+        </p>
+      </div>
+    </div>
+  )
+}
+
 function App() {
+  const [session, setSession] = useState(null)
+  const [authLoading, setAuthLoading] = useState(true)
   const [transactions, setTransactions] = useState([])
   const [accounts, setAccounts] = useState([])
   const [customCategories, setCustomCategories] = useState({ income: [], expense: [] })
@@ -142,8 +198,21 @@ function App() {
     return list.find(c => c.value === cat) || { label: cat, icon: '📌' }
   }, [CATEGORIES])
 
-  // ─── Fetch all data from Supabase on mount ───
+  // ─── Auth listener ───
   useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session)
+      setAuthLoading(false)
+    })
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session)
+    })
+    return () => subscription.unsubscribe()
+  }, [])
+
+  // ─── Fetch all data from Supabase when logged in ───
+  useEffect(() => {
+    if (!session) { setLoading(false); return }
     async function fetchAll() {
       setLoading(true)
       const [txRes, accRes, catRes] = await Promise.all([
@@ -163,7 +232,7 @@ function App() {
       setLoading(false)
     }
     fetchAll()
-  }, [])
+  }, [session])
 
   useEffect(() => { setCategory(CATEGORIES[type]?.[0]?.value || '') }, [type, CATEGORIES])
 
@@ -175,6 +244,7 @@ function App() {
     const row = {
       type, description: description.trim(), amount: parsedAmount, category, date,
       payment_account_id: type === 'expense' && paymentAccountId ? parseInt(paymentAccountId) : null,
+      user_id: session.user.id,
     }
     const { data, error } = await supabase.from('transactions').insert(row).select().single()
     if (error) { alert('Error saving: ' + error.message); return }
@@ -219,6 +289,7 @@ function App() {
       name: accName.trim(), bank: accBank, type: accType,
       balance: parseFloat(accBalance) || 0,
       credit_limit: accType === 'credit' ? (parseFloat(accCreditLimit) || 0) : 0,
+      user_id: session.user.id,
     }
     if (editingAccountId) {
       const { data, error } = await supabase.from('accounts').update(row).eq('id', editingAccountId).select().single()
@@ -253,7 +324,7 @@ function App() {
     if (!catLabel.trim()) return
     const value = catLabel.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-')
     if (CATEGORIES[catType].some(c => c.value === value)) return
-    const row = { type: catType, value, label: catLabel.trim(), icon: catIcon }
+    const row = { type: catType, value, label: catLabel.trim(), icon: catIcon, user_id: session.user.id }
     const { data, error } = await supabase.from('categories').insert(row).select().single()
     if (!error) {
       setCustomCategories(prev => ({
@@ -298,7 +369,7 @@ function App() {
     const row = {
       type: 'expense', description: `CC Bill Payment - ${card.name}`, amount: payAmount,
       category: 'bills', date: new Date().toISOString().split('T')[0],
-      payment_account_id: null,
+      payment_account_id: null, user_id: session.user.id,
     }
     const { data: txData } = await supabase.from('transactions').insert(row).select().single()
 
@@ -351,6 +422,8 @@ function App() {
   const periodLabel = chartPeriod === 'week' ? 'This Week' : chartPeriod === 'month' ? 'This Month' : chartPeriod === 'year' ? 'This Year' : 'All Time'
   const allCategories = [...CATEGORIES.income, ...CATEGORIES.expense]
 
+  if (authLoading) return <div className="loading">Loading...</div>
+  if (!session) return <AuthForm />
   if (loading) return <div className="loading">Loading your data...</div>
 
   return (
@@ -358,6 +431,10 @@ function App() {
       <header>
         <h1>Expense Tracker</h1>
         <p>Track your income and expenses by category</p>
+        <div className="header-actions">
+          <span className="user-email">{session.user.email}</span>
+          <button className="btn-logout" onClick={() => supabase.auth.signOut()}>Logout</button>
+        </div>
       </header>
 
       {/* ─── Accounts Section ─── */}

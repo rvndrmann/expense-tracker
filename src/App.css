@@ -917,3 +917,92 @@ header p {
   background: #10b981 !important;
 }
 .btn-pay:hover { background: #059669 !important; }
+
+/* ─── Auth Styles ─── */
+.auth-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100vh;
+  padding: 20px;
+}
+.auth-card {
+  background: white;
+  border-radius: 16px;
+  padding: 40px;
+  box-shadow: 0 8px 30px rgba(0,0,0,0.12);
+  width: 100%;
+  max-width: 400px;
+  text-align: center;
+}
+.auth-card h1 {
+  font-size: 1.8rem;
+  margin-bottom: 4px;
+}
+.auth-subtitle {
+  color: var(--text-secondary);
+  margin-bottom: 24px;
+  font-size: 0.95rem;
+}
+.auth-card .form-group {
+  text-align: left;
+  margin-bottom: 16px;
+}
+.auth-error {
+  background: #fef2f2;
+  color: #dc2626;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  margin-bottom: 12px;
+}
+.auth-message {
+  background: #ecfdf5;
+  color: #059669;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  margin-bottom: 12px;
+}
+.auth-toggle {
+  margin-top: 20px;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--primary);
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 0.9rem;
+  margin-left: 4px;
+}
+.btn-link:hover { text-decoration: underline; }
+
+/* ─── Header Auth ─── */
+.header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+.user-email {
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  background: #f1f5f9;
+  padding: 4px 12px;
+  border-radius: 20px;
+}
+.btn-logout {
+  padding: 5px 14px;
+  background: #ef4444;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-logout:hover { background: #dc2626; }
