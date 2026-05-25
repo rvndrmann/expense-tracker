@@ -178,13 +178,15 @@ function App() {
     }
     const { data, error } = await supabase.from('transactions').insert(row).select().single()
     if (error) { alert('Error saving: ' + error.message); return }
-    // If paid via credit card, increase card's outstanding balance
+    // Update account balance based on payment method
     if (type === 'expense' && paymentAccountId) {
-      const card = accounts.find(a => a.id === parseInt(paymentAccountId))
-      if (card) {
-        const newBalance = card.balance + parsedAmount
-        const { error: accErr } = await supabase.from('accounts').update({ balance: newBalance }).eq('id', card.id)
-        if (!accErr) setAccounts(prev => prev.map(a => a.id === card.id ? { ...a, balance: newBalance } : a))
+      const acc = accounts.find(a => a.id === parseInt(paymentAccountId))
+      if (acc) {
+        // Credit card: increase outstanding due; Bank account: decrease balance
+        const newBalance = acc.type === 'credit' ? acc.balance + parsedAmount : acc.balance - parsedAmount
+        if (acc.type !== 'credit' && newBalance < 0) { alert('Insufficient balance in ' + acc.name); return }
+        const { error: accErr } = await supabase.from('accounts').update({ balance: newBalance }).eq('id', acc.id)
+        if (!accErr) setAccounts(prev => prev.map(a => a.id === acc.id ? { ...a, balance: newBalance } : a))
       }
     }
     setTransactions(prev => [{ ...data, amount: Number(data.amount), payment_account_id: data.payment_account_id }, ...prev])
@@ -195,13 +197,14 @@ function App() {
     const txn = transactions.find(t => t.id === id)
     const { error } = await supabase.from('transactions').delete().eq('id', id)
     if (!error) {
-      // If this expense was paid via credit card, reverse the balance
+      // Reverse the account balance change
       if (txn && txn.payment_account_id) {
-        const card = accounts.find(a => a.id === txn.payment_account_id)
-        if (card) {
-          const newBalance = card.balance - txn.amount
-          const { error: accErr } = await supabase.from('accounts').update({ balance: newBalance }).eq('id', card.id)
-          if (!accErr) setAccounts(prev => prev.map(a => a.id === card.id ? { ...a, balance: newBalance } : a))
+        const acc = accounts.find(a => a.id === txn.payment_account_id)
+        if (acc) {
+          // Credit card: reduce due; Bank account: restore balance
+          const newBalance = acc.type === 'credit' ? acc.balance - txn.amount : acc.balance + txn.amount
+          const { error: accErr } = await supabase.from('accounts').update({ balance: newBalance }).eq('id', acc.id)
+          if (!accErr) setAccounts(prev => prev.map(a => a.id === acc.id ? { ...a, balance: newBalance } : a))
         }
       }
       setTransactions(prev => prev.filter(t => t.id !== id))
@@ -554,11 +557,14 @@ function App() {
                 </select>
               </div>
               <div className="form-group"><label>Date</label><input type="date" value={date} onChange={e => setDate(e.target.value)} required /></div>
-              {type === 'expense' && creditCards.length > 0 && (
+              {type === 'expense' && accounts.length > 0 && (
                 <div className="form-group">
                   <label>Payment Method</label>
                   <select value={paymentAccountId} onChange={e => setPaymentAccountId(e.target.value)}>
-                    <option value="">💵 Cash / Bank</option>
+                    <option value="">💵 Cash (untracked)</option>
+                    {bankAccounts.map(a => (
+                      <option key={a.id} value={a.id}>🏦 {a.name} (Bal: {formatCurrency(a.balance)})</option>
+                    ))}
                     {creditCards.map(c => (
                       <option key={c.id} value={c.id}>💳 {c.name} (Avail: {formatCurrency(c.credit_limit - c.balance)})</option>
                     ))}
@@ -625,7 +631,7 @@ function App() {
                       <div className={`transaction-icon ${t.type}`}>{info.icon}</div>
                       <div className="transaction-info">
                         <div className="desc">{t.description}</div>
-                        <div className="meta">{info.label} &middot; {new Date(t.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}{t.payment_account_id && (() => { const card = accounts.find(a => a.id === t.payment_account_id); return card ? <span className="cc-badge">💳 {card.name}</span> : null })()}</div>
+                        <div className="meta">{info.label} &middot; {new Date(t.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}{t.payment_account_id && (() => { const acc = accounts.find(a => a.id === t.payment_account_id); return acc ? <span className="cc-badge">{acc.type === 'credit' ? '💳' : '🏦'} {acc.name}</span> : null })()}</div>
                       </div>
                       <div className={`transaction-amount ${t.type}`}>{t.type === 'income' ? '+' : '-'}{formatCurrency(t.amount)}</div>
                       <button className="btn-delete" onClick={() => handleDelete(t.id)} title="Delete">✕</button>
