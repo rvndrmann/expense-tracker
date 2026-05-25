@@ -401,10 +401,48 @@ header p {
   cursor: pointer;
 }
 
+.chart-period-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
 .chart-period-label {
   font-size: 13px;
   color: var(--text-secondary);
-  margin-bottom: 16px;
+  flex: 1;
+  text-align: center;
+}
+
+.btn-period-nav {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 14px;
+  cursor: pointer;
+  color: var(--text);
+  transition: background 0.15s;
+}
+
+.btn-period-nav:hover {
+  background: var(--bg);
+}
+
+.btn-period-today {
+  background: #6c63ff;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+.btn-period-today:hover {
+  background: #5b54e6;
 }
 
 .pie-chart-container {
@@ -460,9 +498,20 @@ header p {
   color: var(--text);
 }
 
-.pie-legend-value {
+.pie-legend-amount {
   font-weight: 600;
+  color: var(--text);
+  font-size: 12px;
+  min-width: 70px;
+  text-align: right;
+}
+
+.pie-legend-value {
+  font-weight: 500;
   color: var(--text-secondary);
+  font-size: 11px;
+  min-width: 40px;
+  text-align: right;
 }
 
 /* ============ CATEGORY MANAGEMENT ============ */

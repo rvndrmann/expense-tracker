@@ -75,6 +75,7 @@ function PieChart({ data, colors }) {
           <div className="pie-legend-item" key={i}>
             <span className="pie-dot" style={{ background: s.color }} />
             <span className="pie-legend-label">{s.icon} {s.label}</span>
+            <span className="pie-legend-amount">{formatCurrency(s.value)}</span>
             <span className="pie-legend-value">{s.pct}%</span>
           </div>
         ))}
@@ -88,12 +89,59 @@ function getStartOfWeek(d) {
   const date = new Date(d); const day = date.getDay()
   date.setDate(date.getDate() - (day === 0 ? 6 : day - 1)); date.setHours(0, 0, 0, 0); return date
 }
-function filterByPeriod(transactions, period) {
+function filterByPeriod(transactions, period, offset = 0) {
   const now = new Date()
-  if (period === 'week') { const s = getStartOfWeek(now); return transactions.filter(t => new Date(t.date) >= s) }
-  if (period === 'month') { const s = new Date(now.getFullYear(), now.getMonth(), 1); return transactions.filter(t => new Date(t.date) >= s) }
-  if (period === 'year') { const s = new Date(now.getFullYear(), 0, 1); return transactions.filter(t => new Date(t.date) >= s) }
+  if (period === 'day') {
+    const d = new Date(now); d.setDate(d.getDate() + offset)
+    const s = new Date(d.getFullYear(), d.getMonth(), d.getDate())
+    const e = new Date(s); e.setDate(e.getDate() + 1)
+    return transactions.filter(t => { const td = new Date(t.date); return td >= s && td < e })
+  }
+  if (period === 'week') {
+    const d = new Date(now); d.setDate(d.getDate() + offset * 7)
+    const s = getStartOfWeek(d)
+    const e = new Date(s); e.setDate(e.getDate() + 7)
+    return transactions.filter(t => { const td = new Date(t.date); return td >= s && td < e })
+  }
+  if (period === 'month') {
+    const s = new Date(now.getFullYear(), now.getMonth() + offset, 1)
+    const e = new Date(s.getFullYear(), s.getMonth() + 1, 1)
+    return transactions.filter(t => { const td = new Date(t.date); return td >= s && td < e })
+  }
+  if (period === 'year') {
+    const s = new Date(now.getFullYear() + offset, 0, 1)
+    const e = new Date(s.getFullYear() + 1, 0, 1)
+    return transactions.filter(t => { const td = new Date(t.date); return td >= s && td < e })
+  }
   return transactions
+}
+
+function getPeriodLabel(period, offset) {
+  const now = new Date()
+  if (period === 'day') {
+    const d = new Date(now); d.setDate(d.getDate() + offset)
+    if (offset === 0) return 'Today'
+    if (offset === -1) return 'Yesterday'
+    return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+  }
+  if (period === 'week') {
+    if (offset === 0) return 'This Week'
+    if (offset === -1) return 'Last Week'
+    const d = new Date(now); d.setDate(d.getDate() + offset * 7)
+    const s = getStartOfWeek(d); const e = new Date(s); e.setDate(e.getDate() + 6)
+    return `${s.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })} - ${e.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`
+  }
+  if (period === 'month') {
+    const d = new Date(now.getFullYear(), now.getMonth() + offset, 1)
+    if (offset === 0) return 'This Month'
+    if (offset === -1) return 'Last Month'
+    return d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' })
+  }
+  if (period === 'year') {
+    if (offset === 0) return 'This Year'
+    return (now.getFullYear() + offset).toString()
+  }
+  return 'All Time'
 }
 
 // ─── Auth Login Component ───
@@ -167,6 +215,7 @@ function App() {
   const [filterCategory, setFilterCategory] = useState('all')
   const [rightTab, setRightTab] = useState('transactions')
   const [chartPeriod, setChartPeriod] = useState('month')
+  const [chartOffset, setChartOffset] = useState(0)
   const [chartType, setChartType] = useState('expense')
 
   const [showAccountForm, setShowAccountForm] = useState(false)
@@ -410,16 +459,16 @@ function App() {
   const maxCatAmount = Math.max(...Object.values(categoryTotals), 1)
 
   const chartData = useMemo(() => {
-    const periodTx = filterByPeriod(transactions, chartPeriod).filter(t => t.type === chartType)
+    const periodTx = filterByPeriod(transactions, chartPeriod, chartOffset).filter(t => t.type === chartType)
     const totals = {}
     periodTx.forEach(t => { totals[t.category] = (totals[t.category] || 0) + t.amount })
     return Object.entries(totals).sort((a, b) => b[1] - a[1]).map(([cat, val]) => {
       const info = getCategoryInfo(chartType, cat)
       return { label: info.label, icon: info.icon, value: val }
     })
-  }, [transactions, chartPeriod, chartType, getCategoryInfo])
+  }, [transactions, chartPeriod, chartOffset, chartType, getCategoryInfo])
 
-  const periodLabel = chartPeriod === 'week' ? 'This Week' : chartPeriod === 'month' ? 'This Month' : chartPeriod === 'year' ? 'This Year' : 'All Time'
+  const periodLabel = getPeriodLabel(chartPeriod, chartOffset)
   const allCategories = [...CATEGORIES.income, ...CATEGORIES.expense]
 
   if (authLoading) return <div className="loading">Loading...</div>
@@ -594,9 +643,9 @@ function App() {
           <h2>Spending Overview</h2>
           <div className="chart-controls">
             <div className="tabs tabs-inline">
-              {['week', 'month', 'year', 'all'].map(p => (
-                <button key={p} className={chartPeriod === p ? 'active' : ''} onClick={() => setChartPeriod(p)}>
-                  {p === 'week' ? 'Week' : p === 'month' ? 'Month' : p === 'year' ? 'Year' : 'All'}
+              {['day', 'week', 'month', 'year', 'all'].map(p => (
+                <button key={p} className={chartPeriod === p ? 'active' : ''} onClick={() => { setChartPeriod(p); setChartOffset(0) }}>
+                  {p === 'day' ? 'Day' : p === 'week' ? 'Week' : p === 'month' ? 'Month' : p === 'year' ? 'Year' : 'All'}
                 </button>
               ))}
             </div>
@@ -605,7 +654,12 @@ function App() {
             </select>
           </div>
         </div>
-        <p className="chart-period-label">{periodLabel} &middot; {chartType === 'expense' ? 'Expenses' : 'Income'}</p>
+        <div className="chart-period-nav">
+          {chartPeriod !== 'all' && <button className="btn-period-nav" onClick={() => setChartOffset(o => o - 1)}>◀</button>}
+          <span className="chart-period-label">{periodLabel} &middot; {chartType === 'expense' ? 'Expenses' : 'Income'}</span>
+          {chartPeriod !== 'all' && chartOffset < 0 && <button className="btn-period-nav" onClick={() => setChartOffset(o => o + 1)}>▶</button>}
+          {chartPeriod !== 'all' && chartOffset < 0 && <button className="btn-period-today" onClick={() => setChartOffset(0)}>Today</button>}
+        </div>
         {chartData.length > 0 ? <PieChart data={chartData} colors={PIE_COLORS} /> : <div className="empty-state">No {chartType} data for {periodLabel.toLowerCase()}.</div>}
       </div>
 
